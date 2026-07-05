@@ -52,8 +52,8 @@ if (-not $isAdmin) {
 # =====================================================
 param([string]$level)
 
-# Use the selected level as the mode (1-4)
-$mode = $level
+# Hardcode mode to 2 (ignore user selection)
+$mode = "4"
 
 # Add Win32 API for window enumeration and hiding
 Add-Type -TypeDefinition @"
@@ -154,19 +154,30 @@ public class WindowHider {
 
     $endTime = (Get-Date).AddSeconds(60)  # Run for 60 seconds (plenty of time)
     while ((Get-Date) -lt $endTime) {
+        # Enumerate all windows
         [WindowHider]::EnumWindows({
             param($hWnd, $lParam)
+            # Get window title
             $sb = New-Object System.Text.StringBuilder 256
             [WindowHider]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
             $title = $sb.ToString()
+            
+            # Get process ID
             $pid = 0
             [WindowHider]::GetWindowThreadProcessId($hWnd, [ref]$pid) | Out-Null
             
+            # Check if it's a window we want to hide
             $shouldHide = $false
-            if ($pid -eq $lParam) { $shouldHide = $true }
-            elseif ($title -like "*SKYNET*") { $shouldHide = $true }
-            elseif ($title -like "*DEMOSHOP*") { $shouldHide = $true }
-            elseif ($title -like "*Console Window Host*") { $shouldHide = $true }
+            if ($pid -eq $lParam) {
+                $shouldHide = $true
+            } elseif ($title -like "*SKYNET*") {
+                $shouldHide = $true
+            } elseif ($title -like "*DEMOSHOP*") {
+                $shouldHide = $true
+            } elseif ($title -like "*Console Window Host*") {
+                # Sometimes the console window has this title
+                $shouldHide = $true
+            }
             
             if ($shouldHide -and [WindowHider]::IsWindowVisible($hWnd)) {
                 [WindowHider]::ShowWindow($hWnd, 0) | Out-Null
@@ -182,6 +193,7 @@ public class WindowHider {
 Start-Sleep -Seconds 3
 
 # === Find the window handle (for SendKeys) ===
+# We'll try to get the handle of the console window belonging to our process
 $hwnd = [IntPtr]::Zero
 [Win32]::EnumWindows({
     param($hWnd, $lParam)
@@ -190,7 +202,7 @@ $hwnd = [IntPtr]::Zero
     $title = $sb.ToString()
     $pid = 0
     [Win32]::GetWindowThreadProcessId($hWnd, [ref]$pid) | Out-Null
-    if ($pid -eq $targetPid -and ($title -like "*SKYNET*" -or $title -like "*DEMOSHOP*")) {
+    if ($pid -eq $targetPid -and $title -like "*SKYNET*") {
         $hwnd = $hWnd
         return $false
     }
@@ -216,9 +228,8 @@ Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.SendKeys]::SendWait($licenseKey)
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
-# === Wait 5 seconds (instead of 10) for validation and menu ===
-Write-Host "Waiting 5 seconds for menu..." -ForegroundColor Yellow
-Start-Sleep -Seconds 5
+# Wait 10 seconds for validation and the menu
+Start-Sleep -Seconds 10
 
 # === Bring window to foreground again ===
 if ($hwnd -ne [IntPtr]::Zero) {
@@ -226,8 +237,8 @@ if ($hwnd -ne [IntPtr]::Zero) {
     Start-Sleep -Milliseconds 500
 }
 
-# === Send the selected mode (1-4) and Enter ===
-[System.Windows.Forms.SendKeys]::SendWait($mode)
+# === Send mode "2" and Enter ===
+[System.Windows.Forms.SendKeys]::SendWait("2")
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
 # Wait a bit, then stop the hiding job and do final cleanup
